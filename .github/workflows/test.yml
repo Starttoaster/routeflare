@@ -1,31 +1,54 @@
-name: Release Charts
-
+name: Test/Lint/Fmt/Vet
 on:
-  push:
-    branches:
-      - main
-  workflow_dispatch:
+  pull_request:
 
 jobs:
-  release:
-    permissions:
-      contents: write
+  test:
     runs-on: ubuntu-latest
+    container: golang:1
+    env:
+      GOFLAGS: "-buildvcs=false"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Configure Git
+      - name: Build
+        run: go build -o /dev/null ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Check gofmt changes
         run: |
-          git config user.name "$GITHUB_ACTOR"
-          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+          if [ "$(gofmt -s -l . | wc -l)" -gt 0 ]; then
+            echo "Check local formatting with gofmt, the following files have formatting deviations:"
+            gofmt -s -l .
+            exit 1 
+          fi
 
-      - name: Run chart-releaser
-        uses: helm/chart-releaser-action@v1.6.0
-        env:
-          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
-        with:
-          charts_dir: ./chart
-          mark_as_latest: false
+      - name: Vet
+        run: go vet ./...
+
+      - name: Verify Go modules
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Run govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck -test ./...
+
+      - name: Run errcheck
+        run: |
+          go install github.com/kisielk/errcheck@latest
+          errcheck ./...
+
+      - name: Run staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@latest
+          staticcheck ./...
+
+      - name: Run golint
+        run: |
+          go install golang.org/x/lint/golint@latest
+          golint -set_exit_status ./...
