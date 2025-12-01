@@ -73,4 +73,3 @@ func GetGatewayAddresses(gateway *unstructured.Unstructured, recordType string) 
 		return nil, fmt.Errorf("unsupported record type: %s", recordType)
 	}
 }
-

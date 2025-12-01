@@ -122,4 +122,3 @@ func (d *Detector) getPublicIP(ctx context.Context, url, ipType string) (string,
 
 	return ipStr, nil
 }
-
