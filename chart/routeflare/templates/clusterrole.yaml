@@ -1,0 +1,32 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "routeflare.fullname" . }}
+  labels:
+    {{- include "routeflare.labels" . | nindent 4 }}
+rules:
+  # HTTPRoutes - list, watch, get
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - httproutes
+    verbs:
+      - get
+      - list
+      - watch
+  # Gateways - get (needed to read status.addresses)
+  - apiGroups:
+      - gateway.networking.k8s.io
+    resources:
+      - gateways
+    verbs:
+      - get
+  # Namespaces - list (needed for cluster-wide HTTPRoute listing)
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - list
+      - get
+
