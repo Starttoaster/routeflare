@@ -29,7 +29,9 @@ func NewClient(apiToken string) (*Client, error) {
 type RecordType string
 
 const (
-	RecordTypeA    RecordType = "A"
+	// RecordTypeA represents the identifier for an A record
+	RecordTypeA RecordType = "A"
+	// RecordTypeAAAA represents the identifier for an AAAA record
 	RecordTypeAAAA RecordType = "AAAA"
 )
 

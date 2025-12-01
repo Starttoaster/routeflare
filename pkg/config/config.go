@@ -10,7 +10,9 @@ import (
 type Strategy string
 
 const (
-	StrategyFull       Strategy = "full"
+	// StrategyFull strategy informs routeflare it should fully manage DNS records for HTTPRoutes
+	StrategyFull Strategy = "full"
+	// StrategyUpsertOnly strategy informs routeflare it should only create and update DNS records for HTTPRoutes
 	StrategyUpsertOnly Strategy = "upsert-only"
 )
 
