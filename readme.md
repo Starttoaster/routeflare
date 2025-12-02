@@ -41,3 +41,9 @@ The `routeflare/content-mode` annotation on HTTPRoutes supports the following va
 This tool is early on in development. Do not use this for production web services, this is intended for a homelab. 
 
 One identified limitation of Routeflare is if you perform the following steps in order: If you start Routeflare in your cluster, create an HTTPRoute with relevant annotations for this tool so that it creates a DNS record, stop Routeflare, delete the HTTPRoute, and finally start Routeflare back up again, then Routeflare will lose track of that DNS record and leave the record dangling in Cloudflare. This is because Routeflare is entirely stateless, and doesn't track ownership of records using any mechanism in Cloudflare. The problem of ownership state could be handled a few different ways: External-DNS uses TXT records to close this limitation, though ownership metadata could also just be stored alongside the record in its comment section, or just in a local sqlite database. The best solution is being brainstormed.
+
+Another limitation is that Routeflare doesn't try to account for state drift. If you manually change a record in Cloudflare, Routeflare currently will not attempt to fix it until either: the next restart of the Routeflare container, or the next time your HTTPRoute is updated.
+
+Additionally, in the future this tool may support Routeflare annotations on Services, or even Ingresses (though the Ingress spec is a bit of a mess with competing APIs.) But it currently does not, and only supports HTTPRoutes.
+
+If you find another limitation of Routeflare, please open up an Issue!
