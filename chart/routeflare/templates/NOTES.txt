@@ -1,0 +1,23 @@
+Routeflare has been installed!
+
+1. Verify the deployment:
+   kubectl get pods -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "routeflare.name" . }}
+
+2. Check the logs:
+   kubectl logs -n {{ .Release.Namespace }} -l app.kubernetes.io/name={{ include "routeflare.name" . }} --tail=50
+
+3. Verify RBAC permissions:
+   kubectl auth can-i get httproutes --as=system:serviceaccount:{{ .Release.Namespace }}:{{ include "routeflare.serviceAccountName" . }} -A
+
+{{- if .Values.cloudflare.apiToken.createSecret }}
+4. Cloudflare API token secret has been created as part of this Helm release:
+   kubectl get secret {{ .Values.cloudflare.apiToken.secretName }} -n {{ .Release.Namespace }}
+{{- else if .Values.cloudflare.apiToken.existingSecret }}
+4. Verify Cloudflare API token secret exists:
+   kubectl get secret {{ .Values.cloudflare.apiToken.existingSecretName | default .Values.cloudflare.apiToken.secretName }} -n {{ .Release.Namespace }}
+{{- else }}
+4. WARNING: No Cloudflare API token secret configured. Please set cloudflare.apiToken.createSecret=true with a value, or use an existing secret.
+{{- end }}
+
+For more information, see the README.md in the chart directory.
+

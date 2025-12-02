@@ -1,0 +1,139 @@
+# Default values for routeflare
+replicaCount: 1
+
+image:
+  repository: ghcr.io/starttoaster/routeflare
+  pullPolicy: IfNotPresent
+  tag: "latest"
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # Annotations to add to the service account
+  annotations: {}
+  # The name of the service account to use. If not set and create is true, a name is generated using the fullname template
+  name: ""
+
+podAnnotations: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65534
+  fsGroup: 65534
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65534
+  capabilities:
+    drop:
+      - ALL
+
+# Cloudflare configuration
+cloudflare:
+  # API token (must be provided via secret)
+  apiToken:
+    # Set to true to create a secret as part of the Helm release, false to use an existing secret
+    # For basic installations, set to true and provide the value
+    # For production, set to false and use existingSecret: true with an external secret management system
+    createSecret: true
+    # Set to true if using an existing secret (requires createSecret: false)
+    existingSecret: false
+    # Name of existing secret (only used when existingSecret: true)
+    # If not set, will use secretName
+    existingSecretName: ""
+    # Secret name containing the API token
+    secretName: routeflare-cloudflare-token
+    # Key in the secret containing the API token
+    secretKey: token
+    # Value for the API token (only used when createSecret: true)
+    # Set this to your Cloudflare API token for basic installations
+    # In production, use an existing secret or external secret management instead
+    value: ""
+  # Strategy: "full" or "upsert-only" (default: "full")
+  # "full" - manages complete lifecycle (create, update, delete)
+  # "upsert-only" - only creates/updates records, never deletes
+  strategy: "full"
+
+# Kubernetes configuration
+kubernetes:
+  # Kubeconfig path (leave empty to use in-cluster config)
+  kubeconfig: ""
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Additional environment variables
+env: []
+  # - name: CUSTOM_VAR
+  #   value: "value"
+
+# Liveness probe
+# Note: If health endpoints are not implemented, set to {} to disable or use exec probe
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+# Alternative exec probe if health endpoints are not available:
+# livenessProbe:
+#   exec:
+#     command:
+#       - /bin/sh
+#       - -c
+#       - "pgrep routeflare || exit 1"
+#   initialDelaySeconds: 30
+#   periodSeconds: 10
+
+# Readiness probe
+# Note: If health endpoints are not implemented, set to {} to disable or use exec probe
+readinessProbe:
+  httpGet:
+    path: /readyz
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+# Alternative exec probe if health endpoints are not available:
+# readinessProbe:
+#   exec:
+#     command:
+#       - /bin/sh
+#       - -c
+#       - "pgrep routeflare || exit 1"
+#   initialDelaySeconds: 10
+#   periodSeconds: 5
+
+# Pod disruption budget
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # maxUnavailable: 0  # Alternative to minAvailable
+
+# Service monitor for Prometheus (if using Prometheus Operator)
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  scrapeTimeout: 10s
