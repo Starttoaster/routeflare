@@ -77,18 +77,7 @@ func (c *Controller) Run() error {
 	// Start DDNS background job
 	go c.runDDNSJob()
 
-	// List all existing HTTPRoutes
-	routes, err := c.k8sClient.ListHTTPRoutes(c.ctx)
-	if err != nil {
-		return fmt.Errorf("error listing HTTPRoutes: %w", err)
-	}
-
-	log.Printf("Found %d HTTPRoute(s)", len(routes))
-	for _, route := range routes {
-		c.processHTTPRoute(route, false)
-	}
-
-	// Watch for changes
+	// Watch for HTTPRoute changes
 	return c.watchHTTPRoutes()
 }
 
