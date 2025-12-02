@@ -1,5 +1,7 @@
 # Routeflare
 
+<p align="center"><img src="content/routeflare.png" alt="Routeflarepher" width="100" height="100"></p>
+
 Do you use the Gateway API for Kubernetes? Do you use Cloudflare for a DNS provider? If your answer to both of these questions was "yes" then this may have some interest for you. I was tired of needing external-dns, DDNS client installations, overly complex configurations, and rigid tools that just didn't do exactly what I wanted them to do even with all their complexity.
 
 **So what did I want?**
