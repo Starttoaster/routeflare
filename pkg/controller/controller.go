@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,7 @@ type Controller struct {
 	ddnsRoutes   map[string]*ddnsRoute
 	ddnsMutex    sync.RWMutex
 	ddnsInterval time.Duration
+	httpServer   *http.Server
 }
 
 type ddnsRoute struct {
@@ -67,6 +69,11 @@ func NewController(cfg *config.Config, k8sClient *kubernetes.Client, cfClient *c
 func (c *Controller) Run() error {
 	log.Println("Starting RouteFlare controller...")
 
+	// Start healthcheck HTTP server
+	if err := c.startHealthcheckServer(); err != nil {
+		return fmt.Errorf("error starting healthcheck server: %w", err)
+	}
+
 	// Start DDNS background job
 	go c.runDDNSJob()
 
@@ -88,6 +95,14 @@ func (c *Controller) Run() error {
 // Stop stops the controller
 func (c *Controller) Stop() {
 	c.cancel()
+	// Shutdown HTTP server gracefully
+	if c.httpServer != nil {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := c.httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("Error shutting down healthcheck server: %v", err)
+		}
+	}
 }
 
 // watchHTTPRoutes watches for HTTPRoute changes
@@ -473,6 +488,35 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 	c.ddnsMutex.Lock()
 	delete(c.ddnsRoutes, routeKey)
 	c.ddnsMutex.Unlock()
+}
+
+// startHealthcheckServer starts the HTTP server for healthcheck endpoint
+func (c *Controller) startHealthcheckServer() error {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", c.healthcheckHandler)
+
+	c.httpServer = &http.Server{
+		Addr:    ":8080",
+		Handler: mux,
+	}
+
+	go func() {
+		log.Println("Starting healthcheck server on :8080/healthz")
+		if err := c.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Printf("Healthcheck server error: %v", err)
+		}
+	}()
+
+	return nil
+}
+
+// healthcheckHandler handles the /healthz endpoint
+func (c *Controller) healthcheckHandler(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, err := w.Write([]byte("OK"))
+	if err != nil {
+		log.Printf("Healthcheck error writing response: %v\n", err)
+	}
 }
 
 // runDDNSJob runs a background job to check for IP changes in DDNS routes
