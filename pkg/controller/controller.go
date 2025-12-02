@@ -118,39 +118,50 @@ func (c *Controller) watchHTTPRoutes() error {
 		log.Println("HTTPRoute watcher started. Waiting for events...")
 
 		for {
-			select {
-			case <-c.ctx.Done():
-				log.Println("Context cancelled, stopping watcher")
-				watcher.Stop()
-				return nil
-			case event, ok := <-watcher.ResultChan():
-				if !ok {
-					log.Println("Watch channel closed, reconnecting...")
-					watcher.Stop()
-					time.Sleep(5 * time.Second)
-					break // Break inner loop to reconnect
-				}
-
-				switch event.Type {
-				case watch.Added:
-					if route, ok := event.Object.(*unstructured.Unstructured); ok {
-						log.Printf("HTTPRoute added: %s/%s", route.GetNamespace(), route.GetName())
-						c.processHTTPRoute(route, false)
-					}
-				case watch.Modified:
-					if route, ok := event.Object.(*unstructured.Unstructured); ok {
-						log.Printf("HTTPRoute modified: %s/%s", route.GetNamespace(), route.GetName())
-						c.processHTTPRoute(route, false)
-					}
-				case watch.Deleted:
-					log.Printf("HTTPRoute deleted: %s/%s", getNamespace(event.Object), getName(event.Object))
-					c.processHTTPRouteDeletion(event.Object)
-				case watch.Error:
-					log.Printf("Watch error: %v", event.Object)
-				}
+			done, err := c.watchHTTPRoutesEventLoop(watcher)
+			if err != nil {
+				log.Printf("Watcher error: %v", err)
+				time.Sleep(5 * time.Second)
+				break // breaks out of inner loop to attempt a reconnect
+			}
+			if done {
+				return nil // breaks out of both loops if routeflare is shutting down
 			}
 		}
 	}
+}
+
+func (c *Controller) watchHTTPRoutesEventLoop(watcher watch.Interface) (bool, error) {
+	select {
+	case <-c.ctx.Done():
+		log.Println("Context cancelled, stopping watcher")
+		watcher.Stop()
+		return true, nil
+	case event, ok := <-watcher.ResultChan():
+		if !ok {
+			watcher.Stop()
+			return false, fmt.Errorf("watch channel closed, will attempt to restart watcher")
+		}
+
+		switch event.Type {
+		case watch.Added:
+			if route, ok := event.Object.(*unstructured.Unstructured); ok {
+				log.Printf("HTTPRoute added: %s/%s", route.GetNamespace(), route.GetName())
+				c.processHTTPRoute(route, false)
+			}
+		case watch.Modified:
+			if route, ok := event.Object.(*unstructured.Unstructured); ok {
+				log.Printf("HTTPRoute modified: %s/%s", route.GetNamespace(), route.GetName())
+				c.processHTTPRoute(route, false)
+			}
+		case watch.Deleted:
+			log.Printf("HTTPRoute deleted: %s/%s", getNamespace(event.Object), getName(event.Object))
+			c.processHTTPRouteDeletion(event.Object)
+		case watch.Error:
+			log.Printf("Watch error: %v", event.Object)
+		}
+	}
+	return false, nil
 }
 
 // processHTTPRoute processes a single HTTPRoute
