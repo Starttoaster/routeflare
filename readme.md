@@ -15,11 +15,7 @@ Note: This tool assumes you use Gateways and HTTPRoutes from Gateway API. Other 
 
 ## Deployment
 
-This tool's configuration is managed through the following environment variables:
-
- - `CLOUDFLARE_API_TOKEN` - This tool uses the Cloudflare API to function, and therefore needs a Cloudflare API token with permissions to write to the zone(s) you want this tool to manage records in.
- - `STRATEGY` - OPTIONAL: Options are "upsert-only" or "full". upsert-only will only create/update records, never delete. full manages the whole lifecycle of a record, to deleting it when an HTTPRoute is deleted. full is the default.
- - `KUBECONFIG` - OPTIONAL: Specifies the full path to a kubeconfig file. Uses the in-cluster configuration if unspecified.
+See the [Helm Chart's readme.](chart/routeflare/README.md)
 
 ## Usage
 
@@ -39,3 +35,9 @@ The `routeflare/content-mode` annotation on HTTPRoutes supports the following va
 - `gateway-address` will use the IPs specified in the Gateway's `status.addresses` specified as a parent of the HTTPRoute, for your record(s). It will take the first IPv4 address specified in `status.addresses` if `routeflare/type` is set to `A`, the first IPv6 address if set to `AAAA`, or the first occurrence of both if set to `A/AAAA`.
 
 - `ddns` will detect the current IP address your cluster egresses to the world from and use that in the content for your record(s). Will attempt to automatically detect your current IPv4 address if `routeflare/type` is set to `A`, IPv6 if set to `AAAA`, or both if set to `A/AAAA`. A background job will run to detect if your address has changed and reconcile that with your `ddns` HTTPRoutes.
+
+## Limitations
+
+This tool is early on in development. Do not use this for production web services, this is intended for a homelab. 
+
+One identified limitation of Routeflare is if you perform the following steps in order: If you start Routeflare in your cluster, create an HTTPRoute with relevant annotations for this tool so that it creates a DNS record, stop Routeflare, delete the HTTPRoute, and finally start Routeflare back up again, then Routeflare will lose track of that DNS record and leave the record dangling in Cloudflare. This is because Routeflare is entirely stateless, and doesn't track ownership of records using any mechanism in Cloudflare. The problem of ownership state could be handled a few different ways: External-DNS uses TXT records to close this limitation, though ownership metadata could also just be stored alongside the record in its comment section, or just in a local sqlite database. The best solution is being brainstormed.
