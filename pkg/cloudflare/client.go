@@ -108,10 +108,17 @@ func (c *Client) CreateRecord(ctx context.Context, zoneID string, record DNSReco
 }
 
 // UpdateRecord updates an existing DNS record
-func (c *Client) UpdateRecord(ctx context.Context, zoneID, recordID string, record DNSRecord) (*DNSRecord, error) {
+func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord DNSRecord, record DNSRecord) (*DNSRecord, error) {
+	// Check if all record fields are already up to date before updating
+	record.ID = currentRecord.ID
+	if currentRecord == record {
+		return &record, nil
+	}
+
+	// Assemble update record params and make the request
 	proxied := record.Proxied
 	cfRecord := cloudflare.UpdateDNSRecordParams{
-		ID:      recordID,
+		ID:      record.ID,
 		Type:    string(record.Type),
 		Name:    record.Name,
 		Content: record.Content,
@@ -152,7 +159,7 @@ func (c *Client) UpsertRecord(ctx context.Context, zoneID string, record DNSReco
 
 	if existing != nil {
 		// Update existing record
-		return c.UpdateRecord(ctx, zoneID, existing.ID, record)
+		return c.UpdateRecord(ctx, zoneID, *existing, record)
 	}
 
 	// Create new record
