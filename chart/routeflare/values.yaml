@@ -110,7 +110,7 @@ livenessProbe:
 # Note: If health endpoints are not implemented, set to {} to disable or use exec probe
 readinessProbe:
   httpGet:
-    path: /readyz
+    path: /healthz
     port: 8080
   initialDelaySeconds: 10
   periodSeconds: 5
