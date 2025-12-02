@@ -539,7 +539,7 @@ func extractZoneFromRecordName(recordName string) (string, error) {
 	}
 	// Assume the zone is everything after the first part
 	// e.g., api.example.com -> example.com
-	return strings.Join(parts[1:], "."), nil
+	return strings.Join(parts[len(parts)-2:], "."), nil
 }
 
 func isIPv6(ip string) bool {
