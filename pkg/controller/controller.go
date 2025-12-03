@@ -19,7 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// Controller manages HTTPRoute watching and DNS record management
+// Controller manages HTTPRoute informer and DNS record management
 type Controller struct {
 	cfg               *config.Config
 	k8sClient         *kubernetes.Client
@@ -75,8 +75,15 @@ func (c *Controller) Run() error {
 	// Start reconciliation background job
 	go c.runReconciliationJob()
 
-	// Watch for HTTPRoute changes
-	return c.watchHTTPRoutes()
+	// Start HTTPRoute informer
+	if err := c.startHTTPRouteInformer(); err != nil {
+		return fmt.Errorf("error starting HTTPRoute informer: %w", err)
+	}
+
+	// Block until context is cancelled
+	<-c.ctx.Done()
+	slogs.Logr.Info("Controller shutting down")
+	return nil
 }
 
 // Stop stops the controller

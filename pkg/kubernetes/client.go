@@ -9,10 +9,11 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 )
@@ -33,8 +34,10 @@ var (
 
 // Client wraps Kubernetes clients
 type Client struct {
-	dynamicClient dynamic.Interface
-	clientset     kubernetes.Interface
+	dynamicClient     dynamic.Interface
+	clientset         kubernetes.Interface
+	informerFactory   dynamicinformer.DynamicSharedInformerFactory
+	httpRouteInformer cache.SharedInformer
 }
 
 // NewClient creates a new Kubernetes client
@@ -60,9 +63,17 @@ func NewClient(kubeconfigPath string) (*Client, error) {
 		return nil, fmt.Errorf("error connecting to Kubernetes cluster: %w", err)
 	}
 
+	// Create informer factory
+	informerFactory := dynamicinformer.NewDynamicSharedInformerFactory(dynamicClient, 0)
+
+	// Create HTTPRoute informer
+	httpRouteInformer := informerFactory.ForResource(httpRouteGVR).Informer()
+
 	return &Client{
-		dynamicClient: dynamicClient,
-		clientset:     clientset,
+		dynamicClient:     dynamicClient,
+		clientset:         clientset,
+		informerFactory:   informerFactory,
+		httpRouteInformer: httpRouteInformer,
 	}, nil
 }
 
@@ -103,10 +114,19 @@ func (c *Client) ListHTTPRoutes(ctx context.Context) ([]*unstructured.Unstructur
 	return routes, nil
 }
 
-// WatchHTTPRoutes watches for HTTPRoute changes
-func (c *Client) WatchHTTPRoutes(ctx context.Context) (watch.Interface, error) {
-	httpRouteClient := c.dynamicClient.Resource(httpRouteGVR)
-	return httpRouteClient.Namespace("").Watch(ctx, metav1.ListOptions{})
+// GetHTTPRouteInformer returns the HTTPRoute informer
+func (c *Client) GetHTTPRouteInformer() cache.SharedInformer {
+	return c.httpRouteInformer
+}
+
+// StartInformerFactory starts the informer factory
+func (c *Client) StartInformerFactory(stopCh <-chan struct{}) {
+	c.informerFactory.Start(stopCh)
+}
+
+// WaitForCacheSync waits for the HTTPRoute informer cache to sync
+func (c *Client) WaitForCacheSync(ctx context.Context) bool {
+	return cache.WaitForCacheSync(ctx.Done(), c.httpRouteInformer.HasSynced)
 }
 
 // GetGateway gets a Gateway by namespace and name
