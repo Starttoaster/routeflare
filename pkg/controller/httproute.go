@@ -10,65 +10,83 @@ import (
 	"github.com/starttoaster/routeflare/pkg/kubernetes"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/tools/cache"
 )
 
-// watchHTTPRoutes watches for HTTPRoute changes
-func (c *Controller) watchHTTPRoutes() error {
-	for {
-		watcher, err := c.k8sClient.WatchHTTPRoutes(c.ctx)
-		if err != nil {
-			return fmt.Errorf("error watching HTTPRoutes: %w", err)
-		}
+// startHTTPRouteInformer starts the HTTPRoute informer and sets up event handlers
+func (c *Controller) startHTTPRouteInformer() error {
+	informer := c.k8sClient.GetHTTPRouteInformer()
 
-		slogs.Logr.Info("HTTPRoute watcher started")
-
-		for {
-			done, err := c.watchHTTPRoutesEventLoop(watcher)
-			if err != nil {
-				slogs.Logr.Error("watcher error", "error", err)
-				time.Sleep(5 * time.Second)
-				break // breaks out of inner loop to attempt a reconnect
-			}
-			if done {
-				return nil // breaks out of both loops if routeflare is shutting down
-			}
-		}
-	}
-}
-
-func (c *Controller) watchHTTPRoutesEventLoop(watcher watch.Interface) (bool, error) {
-	select {
-	case <-c.ctx.Done():
-		slogs.Logr.Info("Gracefully stopping HTTPRoute watcher")
-		watcher.Stop()
-		return true, nil
-	case event, ok := <-watcher.ResultChan():
-		if !ok {
-			watcher.Stop()
-			return false, fmt.Errorf("watch channel closed, will attempt to restart watcher")
-		}
-
-		switch event.Type {
-		case watch.Added:
-			// All HTTPRoutes will appear to be Added when the watcher first starts up
-			if route, ok := event.Object.(*unstructured.Unstructured); ok {
+	// Set up event handlers
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			if route, ok := obj.(*unstructured.Unstructured); ok {
 				slogs.Logr.Info("HTTPRoute added", "route", fmt.Sprintf("%s/%s", route.GetNamespace(), route.GetName()))
 				c.processHTTPRoute(route, false)
 			}
-		case watch.Modified:
-			if route, ok := event.Object.(*unstructured.Unstructured); ok {
+		},
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			if route, ok := newObj.(*unstructured.Unstructured); ok {
 				slogs.Logr.Info("HTTPRoute modified", "route", fmt.Sprintf("%s/%s", route.GetNamespace(), route.GetName()))
 				c.processHTTPRoute(route, false)
 			}
-		case watch.Deleted:
-			slogs.Logr.Info("HTTPRoute deleted", "route", fmt.Sprintf("%s/%s", getNamespace(event.Object), getName(event.Object)))
-			c.processHTTPRouteDeletion(event.Object)
-		case watch.Error:
-			slogs.Logr.Info("Watch error", "error", event.Object)
+		},
+		DeleteFunc: func(obj interface{}) {
+			// Handle deletion - obj might be a DeletedFinalStateUnknown
+			var route *unstructured.Unstructured
+			switch t := obj.(type) {
+			case *unstructured.Unstructured:
+				route = t
+			case cache.DeletedFinalStateUnknown:
+				if deleted, ok := t.Obj.(*unstructured.Unstructured); ok {
+					route = deleted
+				} else {
+					slogs.Logr.Warn("Could not convert deleted object to unstructured", "type", fmt.Sprintf("%T", t.Obj))
+					return
+				}
+			default:
+				slogs.Logr.Warn("Unknown object type in delete handler", "type", fmt.Sprintf("%T", obj))
+				return
+			}
+			slogs.Logr.Info("HTTPRoute deleted", "route", fmt.Sprintf("%s/%s", route.GetNamespace(), route.GetName()))
+			c.processHTTPRouteDeletion(route)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("error adding event handlers: %w", err)
+	}
+
+	// Start the informer factory
+	stopCh := make(chan struct{})
+	go func() {
+		<-c.ctx.Done()
+		close(stopCh)
+	}()
+	c.k8sClient.StartInformerFactory(stopCh)
+
+	// Wait for cache to sync
+	slogs.Logr.Info("Waiting for HTTPRoute informer cache to sync...")
+	if !c.k8sClient.WaitForCacheSync(c.ctx) {
+		return fmt.Errorf("error waiting for HTTPRoute informer cache to sync")
+	}
+	slogs.Logr.Info("HTTPRoute informer cache synced")
+
+	// Process existing HTTPRoutes from cache
+	return c.processExistingHTTPRoutes(informer)
+}
+
+// processExistingHTTPRoutes processes all existing HTTPRoutes from the informer cache
+func (c *Controller) processExistingHTTPRoutes(informer cache.SharedInformer) error {
+	routes := informer.GetStore().List()
+	slogs.Logr.Info("Processing existing HTTPRoutes from cache", "count", len(routes))
+
+	for _, obj := range routes {
+		if route, ok := obj.(*unstructured.Unstructured); ok {
+			c.processHTTPRoute(route, false)
 		}
 	}
-	return false, nil
+
+	return nil
 }
 
 // processHTTPRoute processes a single HTTPRoute
@@ -467,23 +485,35 @@ func (c *Controller) runReconciliationJob() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
+			// Use informer cache to get all HTTPRoutes
+			informer := c.k8sClient.GetHTTPRouteInformer()
+			routes := informer.GetStore().List()
+
+			// Build a map of routes from cache for quick lookup
+			cacheRoutes := make(map[string]*unstructured.Unstructured)
+			for _, obj := range routes {
+				if route, ok := obj.(*unstructured.Unstructured); ok {
+					routeKey := fmt.Sprintf("%s/%s", route.GetNamespace(), route.GetName())
+					cacheRoutes[routeKey] = route
+				}
+			}
+
 			c.routesMutex.RLock()
-			routes := make([]*trackedRoute, 0, len(c.trackedRoutes))
+			trackedRoutes := make([]*trackedRoute, 0, len(c.trackedRoutes))
 			for _, route := range c.trackedRoutes {
-				routes = append(routes, route)
+				trackedRoutes = append(trackedRoutes, route)
 			}
 			c.routesMutex.RUnlock()
 
-			for _, trackedRoute := range routes {
-				// Get the specific HTTPRoute
-				route, err := c.k8sClient.GetHTTPRoute(c.ctx, trackedRoute.namespace, trackedRoute.name)
-				if err != nil {
-					// Route might have been deleted, remove from tracking
-					slogs.Logr.Error("getting HTTPRoute for reconciliation (may have been deleted)",
-						"route", fmt.Sprintf("%s/%s", trackedRoute.namespace, trackedRoute.name),
-						"error", err)
+			for _, trackedRoute := range trackedRoutes {
+				routeKey := fmt.Sprintf("%s/%s", trackedRoute.namespace, trackedRoute.name)
+				route, exists := cacheRoutes[routeKey]
+
+				if !exists {
+					// Route no longer exists in cache, remove from tracking
+					slogs.Logr.Info("HTTPRoute no longer exists, removing from tracking",
+						"route", routeKey)
 					c.routesMutex.Lock()
-					routeKey := fmt.Sprintf("%s/%s", trackedRoute.namespace, trackedRoute.name)
 					delete(c.trackedRoutes, routeKey)
 					c.routesMutex.Unlock()
 					continue
@@ -498,7 +528,7 @@ func (c *Controller) runReconciliationJob() {
 					c.processHTTPRoute(route, true)
 				default:
 					slogs.Logr.Warn("Unknown content mode during reconciliation",
-						"route", fmt.Sprintf("%s/%s", trackedRoute.namespace, trackedRoute.name),
+						"route", routeKey,
 						"contentMode", trackedRoute.contentMode)
 				}
 			}

@@ -15,11 +15,9 @@ import (
 	"github.com/starttoaster/routeflare/pkg/config"
 	"github.com/starttoaster/routeflare/pkg/ddns"
 	"github.com/starttoaster/routeflare/pkg/kubernetes"
-
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// Controller manages HTTPRoute watching and DNS record management
+// Controller manages HTTPRoute informer and DNS record management
 type Controller struct {
 	cfg               *config.Config
 	k8sClient         *kubernetes.Client
@@ -75,8 +73,15 @@ func (c *Controller) Run() error {
 	// Start reconciliation background job
 	go c.runReconciliationJob()
 
-	// Watch for HTTPRoute changes
-	return c.watchHTTPRoutes()
+	// Start HTTPRoute informer
+	if err := c.startHTTPRouteInformer(); err != nil {
+		return fmt.Errorf("error starting HTTPRoute informer: %w", err)
+	}
+
+	// Block until context is cancelled
+	<-c.ctx.Done()
+	slogs.Logr.Info("Controller shutting down")
+	return nil
 }
 
 // Stop stops the controller
@@ -170,20 +175,4 @@ func ipsEqual(a, b []string) bool {
 		}
 	}
 	return true
-}
-
-// getName gets the name out of a (kubernetes) runtime object's metadata
-func getName(obj runtime.Object) string {
-	if meta, ok := obj.(interface{ GetName() string }); ok {
-		return meta.GetName()
-	}
-	return "unknown"
-}
-
-// getNamespace gets the namespace out of a (kubernetes) runtime object's metadata
-func getNamespace(obj runtime.Object) string {
-	if meta, ok := obj.(interface{ GetNamespace() string }); ok {
-		return meta.GetNamespace()
-	}
-	return "unknown"
 }
