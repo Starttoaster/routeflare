@@ -3,6 +3,7 @@ package cloudflare
 import (
 	"context"
 	"fmt"
+	"github.com/chia-network/go-modules/pkg/slogs"
 	"strconv"
 
 	"github.com/cloudflare/cloudflare-go"
@@ -94,8 +95,15 @@ func (c *Client) CreateRecord(ctx context.Context, zoneID string, record DNSReco
 
 	created, err := c.api.CreateDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneID), cfRecord)
 	if err != nil {
-		return nil, fmt.Errorf("error creating DNS record: %w", err)
+		return nil, err
 	}
+
+	slogs.Logr.Info("Successfully created record",
+		"type", cfRecord.Type,
+		"name", cfRecord.Name,
+		"ip", cfRecord.Content,
+		"ttl", cfRecord.TTL,
+		"proxied", cfRecord.Proxied)
 
 	return &DNSRecord{
 		ID:      created.ID,
@@ -128,8 +136,15 @@ func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord 
 
 	updated, err := c.api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneID), cfRecord)
 	if err != nil {
-		return nil, fmt.Errorf("error updating DNS record: %w", err)
+		return nil, err
 	}
+
+	slogs.Logr.Info("Successfully updated record",
+		"type", cfRecord.Type,
+		"name", cfRecord.Name,
+		"ip", cfRecord.Content,
+		"ttl", cfRecord.TTL,
+		"proxied", cfRecord.Proxied)
 
 	return &DNSRecord{
 		ID:      updated.ID,

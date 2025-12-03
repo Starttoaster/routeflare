@@ -3,8 +3,8 @@ package ddns
 import (
 	"context"
 	"fmt"
+	"github.com/chia-network/go-modules/pkg/slogs"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"time"
@@ -98,7 +98,7 @@ func (d *Detector) getPublicIP(ctx context.Context, url, ipType string) (string,
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
-			log.Printf("error closing response body to get public IP: %v", err)
+			slogs.Logr.Warn("error closing response body to get public IP", "error", err)
 		}
 	}()
 

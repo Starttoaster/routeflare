@@ -2,13 +2,13 @@ package controller
 
 import (
 	"fmt"
+	"github.com/chia-network/go-modules/pkg/slogs"
 	"github.com/starttoaster/routeflare/pkg/cloudflare"
 	"github.com/starttoaster/routeflare/pkg/gateway"
 	"github.com/starttoaster/routeflare/pkg/kubernetes"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
-	"log"
 	"time"
 )
 
@@ -20,12 +20,12 @@ func (c *Controller) watchHTTPRoutes() error {
 			return fmt.Errorf("error watching HTTPRoutes: %w", err)
 		}
 
-		log.Println("HTTPRoute watcher started. Waiting for events...")
+		slogs.Logr.Info("HTTPRoute watcher started")
 
 		for {
 			done, err := c.watchHTTPRoutesEventLoop(watcher)
 			if err != nil {
-				log.Printf("Watcher error: %v", err)
+				slogs.Logr.Error("watcher error", "error", err)
 				time.Sleep(5 * time.Second)
 				break // breaks out of inner loop to attempt a reconnect
 			}
@@ -39,7 +39,7 @@ func (c *Controller) watchHTTPRoutes() error {
 func (c *Controller) watchHTTPRoutesEventLoop(watcher watch.Interface) (bool, error) {
 	select {
 	case <-c.ctx.Done():
-		log.Println("Context cancelled, stopping watcher")
+		slogs.Logr.Info("Gracefully stopping HTTPRoute watcher")
 		watcher.Stop()
 		return true, nil
 	case event, ok := <-watcher.ResultChan():
@@ -52,19 +52,19 @@ func (c *Controller) watchHTTPRoutesEventLoop(watcher watch.Interface) (bool, er
 		case watch.Added:
 			// All HTTPRoutes will appear to be Added when the watcher first starts up
 			if route, ok := event.Object.(*unstructured.Unstructured); ok {
-				log.Printf("HTTPRoute added: %s/%s", route.GetNamespace(), route.GetName())
+				slogs.Logr.Info("HTTPRoute added", "route", fmt.Sprintf("%s/%s", route.GetNamespace(), route.GetName()))
 				c.processHTTPRoute(route, false)
 			}
 		case watch.Modified:
 			if route, ok := event.Object.(*unstructured.Unstructured); ok {
-				log.Printf("HTTPRoute modified: %s/%s", route.GetNamespace(), route.GetName())
+				slogs.Logr.Info("HTTPRoute modified", "route", fmt.Sprintf("%s/%s", route.GetNamespace(), route.GetName()))
 				c.processHTTPRoute(route, false)
 			}
 		case watch.Deleted:
-			log.Printf("HTTPRoute deleted: %s/%s", getNamespace(event.Object), getName(event.Object))
+			slogs.Logr.Info("HTTPRoute deleted", "route", fmt.Sprintf("%s/%s", getNamespace(event.Object), getName(event.Object)))
 			c.processHTTPRouteDeletion(event.Object)
 		case watch.Error:
-			log.Printf("Watch error: %v", event.Object)
+			slogs.Logr.Info("Watch error", "error", event.Object)
 		}
 	}
 	return false, nil
@@ -74,7 +74,7 @@ func (c *Controller) watchHTTPRoutesEventLoop(watcher watch.Interface) (bool, er
 func (c *Controller) processHTTPRoute(route *unstructured.Unstructured, isDDNSUpdate bool) {
 	name, namespace, annotations, err := kubernetes.ExtractHTTPRouteMetadata(route)
 	if err != nil {
-		log.Printf("Error extracting metadata from HTTPRoute: %v", err)
+		slogs.Logr.Error("extracting metadata from HTTPRoute", "error", err)
 		return
 	}
 
@@ -93,7 +93,9 @@ func (c *Controller) processHTTPRoute(route *unstructured.Unstructured, isDDNSUp
 	// Get record name from HTTPRoute spec.hostnames
 	recordName, err := getRecordNameFromHTTPRoute(route)
 	if err != nil {
-		log.Printf("Error getting record name from HTTPRoute %s/%s: %v", namespace, name, err)
+		slogs.Logr.Error("getting record name from HTTPRoute",
+			"route", fmt.Sprintf("%s/%s", namespace, name),
+			"error", err)
 		return
 	}
 
@@ -101,7 +103,10 @@ func (c *Controller) processHTTPRoute(route *unstructured.Unstructured, isDDNSUp
 	// TODO: any downsides to the zone being derived from the HTTPRoute? Should zone be an annotation? For now this seems sufficient.
 	zoneName, err := extractZoneFromRecordName(recordName)
 	if err != nil {
-		log.Printf("Error extracting zone from record name %s for HTTPRoute %s/%s: %v", recordName, namespace, name, err)
+		slogs.Logr.Error("extracting zone from record name for HTTPRoute",
+			"record", recordName,
+			"route", fmt.Sprintf("%s/%s", namespace, name),
+			"error", err)
 		return
 	}
 
@@ -113,13 +118,17 @@ func (c *Controller) processHTTPRoute(route *unstructured.Unstructured, isDDNSUp
 
 	ttl, err := cloudflare.ParseTTL(routeflareAnns["ttl"])
 	if err != nil {
-		log.Printf("Error parsing TTL for HTTPRoute %s/%s: %v", namespace, name, err)
+		slogs.Logr.Error("parsing TTL for HTTPRoute",
+			"route", fmt.Sprintf("%s/%s", namespace, name),
+			"error", err)
 		ttl = 1 // Default to auto
 	}
 
 	proxied, err := cloudflare.ParseProxied(routeflareAnns["proxied"])
 	if err != nil {
-		log.Printf("Error parsing proxied for HTTPRoute %s/%s: %v", namespace, name, err)
+		slogs.Logr.Error("parsing proxied for HTTPRoute",
+			"route", fmt.Sprintf("%s/%s", namespace, name),
+			"error", err)
 		proxied = false
 	}
 
@@ -130,7 +139,7 @@ func (c *Controller) processHTTPRoute(route *unstructured.Unstructured, isDDNSUp
 	case "ddns":
 		c.processDDNSMode(route, namespace, name, zoneName, recordName, recordType, ttl, proxied, isDDNSUpdate)
 	default:
-		log.Printf("Unknown content-mode '%s' for HTTPRoute %s/%s", contentMode, namespace, name)
+		slogs.Logr.Warn("Unknown content-mode for HTTPRoute", "route", fmt.Sprintf("%s/%s", namespace, name))
 	}
 }
 
@@ -139,7 +148,7 @@ func (c *Controller) processGatewayAddressMode(route *unstructured.Unstructured,
 	// Get parent Gateway references
 	parents, found, err := unstructured.NestedSlice(route.Object, "spec", "parentRefs")
 	if !found || err != nil || len(parents) == 0 {
-		log.Printf("HTTPRoute %s/%s has no parentRefs", route.GetNamespace(), route.GetName())
+		slogs.Logr.Warn("HTTPRoute does not have parentRefs", "route", fmt.Sprintf("%s/%s", route.GetNamespace(), route.GetName()))
 		return
 	}
 
@@ -148,13 +157,13 @@ func (c *Controller) processGatewayAddressMode(route *unstructured.Unstructured,
 	// This logic may need to be built out to find the first actual Gateway parent in this list, or else another parent API object that references a Gateway itself.
 	parentRef, ok := parents[0].(map[string]interface{})
 	if !ok {
-		log.Printf("Invalid parentRef format for HTTPRoute %s/%s", route.GetNamespace(), route.GetName())
+		slogs.Logr.Warn("Invalid parentRef format for HTTPRoute", "route", fmt.Sprintf("%s/%s", route.GetNamespace(), route.GetName()))
 		return
 	}
 
 	gatewayName, found, err := unstructured.NestedString(parentRef, "name")
 	if !found || err != nil {
-		log.Printf("Could not get gateway name from parentRef for HTTPRoute %s/%s", route.GetNamespace(), route.GetName())
+		slogs.Logr.Warn("Could not get gateway name from parentRef for HTTPRoute", "route", fmt.Sprintf("%s/%s", route.GetNamespace(), route.GetName()))
 		return
 	}
 
@@ -166,28 +175,33 @@ func (c *Controller) processGatewayAddressMode(route *unstructured.Unstructured,
 	// Get the Gateway
 	gatewayObj, err := c.k8sClient.GetGateway(c.ctx, gatewayNamespace, gatewayName)
 	if err != nil {
-		log.Printf("Error getting Gateway %s/%s: %v", gatewayNamespace, gatewayName, err)
+		slogs.Logr.Error("getting Gateway",
+			"gateway", fmt.Sprintf("%s/%s", gatewayNamespace, gatewayName),
+			"error", err)
 		return
 	}
 
 	// Extract IP addresses from Gateway
 	ips, err := gateway.GetGatewayAddresses(gatewayObj, recordType)
 	if err != nil {
-		log.Printf("Error getting Gateway addresses: %v", err)
+		slogs.Logr.Error("getting Gateway addresses",
+			"gateway", fmt.Sprintf("%s/%s", gatewayNamespace, gatewayName),
+			"error", err)
 		return
 	}
 
 	// Get zone ID
 	zoneID, err := c.cfClient.GetZoneIDByName(zoneName)
 	if err != nil {
-		log.Printf("Error getting zone ID for %s: %v", zoneName, err)
+		slogs.Logr.Error("getting zone ID from name", "zone-name", zoneName, "error", err)
 		return
 	}
 
 	// Create/update DNS records
 	err = c.createOrUpdateRecords(recordType, zoneID, ips, recordName, ttl, proxied)
 	if err != nil {
-		log.Printf("Error creating or updating records: %v", err)
+		slogs.Logr.Error("creating or updating records", "error", err)
+		return
 	}
 }
 
@@ -196,7 +210,9 @@ func (c *Controller) processDDNSMode(route *unstructured.Unstructured, namespace
 	// Get current public IPs
 	ips, err := c.ddnsDetector.GetPublicIPsByType(c.ctx, recordType)
 	if err != nil {
-		log.Printf("Error getting public IPs for HTTPRoute %s/%s: %v", namespace, name, err)
+		slogs.Logr.Error("getting public IPs for HTTPRoute",
+			"route", fmt.Sprintf("%s/%s", namespace, name),
+			"error", err)
 		return
 	}
 
@@ -215,14 +231,14 @@ func (c *Controller) processDDNSMode(route *unstructured.Unstructured, namespace
 	// Get zone ID
 	zoneID, err := c.cfClient.GetZoneIDByName(zoneName)
 	if err != nil {
-		log.Printf("Error getting zone ID for %s: %v", zoneName, err)
+		slogs.Logr.Error("getting zone ID from name", "zone-name", zoneName, "error", err)
 		return
 	}
 
 	// Create/update DNS records
 	err = c.createOrUpdateRecords(recordType, zoneID, ips, recordName, ttl, proxied)
 	if err != nil {
-		log.Printf("Error creating or updating records: %v", err)
+		slogs.Logr.Error("creating or updating records", "error", err)
 	}
 
 	// Store DDNS route info
@@ -258,7 +274,7 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 				recordTypeForIP = "A"
 			}
 			if recordTypeForIP == "" {
-				log.Printf("Skipping invalid IP, could not determine IP version for address %s", ip)
+				slogs.Logr.Warn("Skipping invalid IP address", "ip", ip)
 				continue
 			}
 
@@ -272,19 +288,17 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 
 			_, err := c.cfClient.UpsertRecord(c.ctx, zoneID, record)
 			if err != nil {
-				log.Printf("Error upserting %s record %s: %v", recordTypeForIP, recordName, err)
+				slogs.Logr.Error("upserting record", "type", recordTypeForIP, "name", recordName, "error", err)
 				continue
-			} else {
-				log.Printf("Successfully upserted %s record %s -> %s", recordTypeForIP, recordName, ip)
-				if recordTypeForIP == "A" {
-					createdIPv4 = true
-				}
-				if recordTypeForIP == "AAAA" {
-					createdIPv6 = true
-				}
 			}
 
 			// Break out of loop if we've created a record for IPv4 and IPv6
+			if recordTypeForIP == "A" {
+				createdIPv4 = true
+			}
+			if recordTypeForIP == "AAAA" {
+				createdIPv6 = true
+			}
 			if createdIPv4 && createdIPv6 {
 				break
 			}
@@ -302,9 +316,7 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 
 				_, err := c.cfClient.UpsertRecord(c.ctx, zoneID, record)
 				if err != nil {
-					log.Printf("Error upserting record %s: %v", recordName, err)
-				} else {
-					log.Printf("Successfully upserted %s record %s -> %s", recordType, recordName, ip)
+					slogs.Logr.Error("upserting record", "type", recordType, "name", recordName, "error", err)
 				}
 				return nil
 			}
@@ -322,9 +334,7 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 
 				_, err := c.cfClient.UpsertRecord(c.ctx, zoneID, record)
 				if err != nil {
-					log.Printf("Error upserting record %s: %v", recordName, err)
-				} else {
-					log.Printf("Successfully upserted %s record %s -> %s", recordType, recordName, ip)
+					slogs.Logr.Error("upserting record", "type", recordType, "name", recordName, "error", err)
 				}
 				return nil
 			}
@@ -342,7 +352,7 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 
 	name, namespace, annotations, err := kubernetes.ExtractHTTPRouteMetadata(obj)
 	if err != nil {
-		log.Printf("Error extracting metadata from deleted HTTPRoute: %v", err)
+		slogs.Logr.Error("extracting metadata from deleted HTTPRoute", "error", err)
 		return
 	}
 
@@ -354,19 +364,21 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 	// Get record name
 	route, ok := obj.(*unstructured.Unstructured)
 	if !ok {
-		log.Printf("Could not convert deleted object to unstructured")
+		slogs.Logr.Error("could not convert deleted object to unstructured", "error", err)
 		return
 	}
 
 	recordName, err := getRecordNameFromHTTPRoute(route)
 	if err != nil {
-		log.Printf("Error getting record name from deleted HTTPRoute %s/%s: %v", namespace, name, err)
+		slogs.Logr.Error("getting record name from deleted HTTPRoute",
+			"route", fmt.Sprintf("%s/%s", namespace, name),
+			"error", err)
 		return
 	}
 
 	zoneName, err := extractZoneFromRecordName(recordName)
 	if err != nil {
-		log.Printf("Error extracting zone from record name %s: %v", recordName, err)
+		slogs.Logr.Error("extracting zone from record name", "name", recordName, "error", err)
 		return
 	}
 
@@ -378,7 +390,7 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 	// Get zone ID
 	zoneID, err := c.cfClient.GetZoneIDByName(zoneName)
 	if err != nil {
-		log.Printf("Error getting zone ID for %s: %v", zoneName, err)
+		slogs.Logr.Error("getting zone ID", "name", zoneName, "error", err)
 		return
 	}
 
@@ -388,28 +400,28 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 		for _, rt := range []string{"A", "AAAA"} {
 			record, err := c.cfClient.FindRecord(c.ctx, zoneID, recordName, cloudflare.RecordType(rt))
 			if err != nil {
-				log.Printf("Error finding %s record %s: %v", rt, recordName, err)
+				slogs.Logr.Error("finding record to delete", "type", rt, "name", recordName, "error", err)
 				continue
 			}
 			if record != nil {
 				if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record.ID); err != nil {
-					log.Printf("Error deleting %s record %s: %v", rt, recordName, err)
+					slogs.Logr.Error("deleting record", "type", rt, "name", recordName, "error", err)
 				} else {
-					log.Printf("Successfully deleted %s record %s", rt, recordName)
+					slogs.Logr.Info("deleted record successfully", "type", rt, "name", recordName)
 				}
 			}
 		}
 	} else {
 		record, err := c.cfClient.FindRecord(c.ctx, zoneID, recordName, cloudflare.RecordType(recordType))
 		if err != nil {
-			log.Printf("Error finding record %s: %v", recordName, err)
+			slogs.Logr.Error("finding record to delete", "type", recordType, "name", recordName, "error", err)
 			return
 		}
 		if record != nil {
 			if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record.ID); err != nil {
-				log.Printf("Error deleting record %s: %v", recordName, err)
+				slogs.Logr.Error("deleting record", "type", recordType, "name", recordName, "error", err)
 			} else {
-				log.Printf("Successfully deleted %s record %s", recordType, recordName)
+				slogs.Logr.Info("deleted record successfully", "type", recordType, "name", recordName)
 			}
 		}
 	}
@@ -443,7 +455,9 @@ func (c *Controller) runDDNSJob() {
 				route, err := c.k8sClient.GetHTTPRoute(c.ctx, ddnsRoute.namespace, ddnsRoute.name)
 				if err != nil {
 					// Route might have been deleted, remove from tracking
-					log.Printf("Error getting HTTPRoute %s/%s for DDNS update (may have been deleted): %v", ddnsRoute.namespace, ddnsRoute.name, err)
+					slogs.Logr.Error("getting HTTPRoute for DDNS update (may have been deleted)",
+						"route", fmt.Sprintf("%s/%s", ddnsRoute.namespace, ddnsRoute.name),
+						"error", err)
 					c.ddnsMutex.Lock()
 					routeKey := fmt.Sprintf("%s/%s", ddnsRoute.namespace, ddnsRoute.name)
 					delete(c.ddnsRoutes, routeKey)

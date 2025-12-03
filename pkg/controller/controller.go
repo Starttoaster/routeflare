@@ -3,7 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
-	"log"
+	"github.com/chia-network/go-modules/pkg/slogs"
 	"net"
 	"net/http"
 	"strings"
@@ -60,7 +60,7 @@ func NewController(cfg *config.Config, k8sClient *kubernetes.Client, cfClient *c
 
 // Run starts the controller
 func (c *Controller) Run() error {
-	log.Println("Starting RouteFlare controller...")
+	slogs.Logr.Info("Starting RouteFlare controller...")
 
 	// Start healthcheck HTTP server
 	if err := c.startHealthcheckServer(); err != nil {
@@ -82,7 +82,7 @@ func (c *Controller) Stop() {
 		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer shutdownCancel()
 		if err := c.httpServer.Shutdown(shutdownCtx); err != nil {
-			log.Printf("Error shutting down healthcheck server: %v", err)
+			slogs.Logr.Warn("error shutting down healthcheck server", "error", err)
 		}
 	}
 }
@@ -100,9 +100,9 @@ func (c *Controller) startHealthcheckServer() error {
 	}
 
 	go func() {
-		log.Println("Starting healthcheck server on :8080/healthz")
+		slogs.Logr.Info("Starting healthcheck server on :8080/healthz")
 		if err := c.httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Printf("Healthcheck server error: %v", err)
+			slogs.Logr.Warn("Healthcheck server error", "error", err)
 		}
 	}()
 
@@ -114,7 +114,7 @@ func (c *Controller) healthcheckHandler(w http.ResponseWriter, _ *http.Request) 
 	w.WriteHeader(http.StatusOK)
 	_, err := w.Write([]byte("OK"))
 	if err != nil {
-		log.Printf("Healthcheck error writing response: %v\n", err)
+		slogs.Logr.Warn("Healthcheck error writing response", "error", err)
 	}
 }
 
