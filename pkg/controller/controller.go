@@ -15,8 +15,6 @@ import (
 	"github.com/starttoaster/routeflare/pkg/config"
 	"github.com/starttoaster/routeflare/pkg/ddns"
 	"github.com/starttoaster/routeflare/pkg/kubernetes"
-
-	"k8s.io/apimachinery/pkg/runtime"
 )
 
 // Controller manages HTTPRoute informer and DNS record management
@@ -177,20 +175,4 @@ func ipsEqual(a, b []string) bool {
 		}
 	}
 	return true
-}
-
-// getName gets the name out of a (kubernetes) runtime object's metadata
-func getName(obj runtime.Object) string {
-	if meta, ok := obj.(interface{ GetName() string }); ok {
-		return meta.GetName()
-	}
-	return "unknown"
-}
-
-// getNamespace gets the namespace out of a (kubernetes) runtime object's metadata
-func getNamespace(obj runtime.Object) string {
-	if meta, ok := obj.(interface{ GetNamespace() string }); ok {
-		return meta.GetNamespace()
-	}
-	return "unknown"
 }
