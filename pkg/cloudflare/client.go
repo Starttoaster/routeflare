@@ -103,7 +103,7 @@ func (c *Client) CreateRecord(ctx context.Context, zoneID string, record DNSReco
 		"name", cfRecord.Name,
 		"ip", cfRecord.Content,
 		"ttl", cfRecord.TTL,
-		"proxied", cfRecord.Proxied)
+		"proxied", record.Proxied)
 
 	return &DNSRecord{
 		ID:      created.ID,
@@ -144,7 +144,7 @@ func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord 
 		"name", cfRecord.Name,
 		"ip", cfRecord.Content,
 		"ttl", cfRecord.TTL,
-		"proxied", cfRecord.Proxied)
+		"proxied", record.Proxied)
 
 	return &DNSRecord{
 		ID:      updated.ID,
