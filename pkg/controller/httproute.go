@@ -406,9 +406,9 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 			if record != nil {
 				if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record.ID); err != nil {
 					slogs.Logr.Error("deleting record", "type", rt, "name", recordName, "error", err)
-				} else {
-					slogs.Logr.Info("deleted record successfully", "type", rt, "name", recordName)
+					continue
 				}
+				slogs.Logr.Info("deleted record successfully", "type", rt, "name", recordName)
 			}
 		}
 	} else {
