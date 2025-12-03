@@ -3,12 +3,13 @@ package controller
 import (
 	"context"
 	"fmt"
-	"github.com/chia-network/go-modules/pkg/slogs"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chia-network/go-modules/pkg/slogs"
 
 	"github.com/starttoaster/routeflare/pkg/cloudflare"
 	"github.com/starttoaster/routeflare/pkg/config"
@@ -20,41 +21,45 @@ import (
 
 // Controller manages HTTPRoute watching and DNS record management
 type Controller struct {
-	cfg          *config.Config
-	k8sClient    *kubernetes.Client
-	cfClient     *cloudflare.Client
-	ddnsDetector *ddns.Detector
-	ctx          context.Context
-	cancel       context.CancelFunc
-	ddnsRoutes   map[string]*ddnsRoute
-	ddnsMutex    sync.RWMutex
-	ddnsInterval time.Duration
-	httpServer   *http.Server
+	cfg               *config.Config
+	k8sClient         *kubernetes.Client
+	cfClient          *cloudflare.Client
+	ddnsDetector      *ddns.Detector
+	ctx               context.Context
+	cancel            context.CancelFunc
+	trackedRoutes     map[string]*trackedRoute
+	routesMutex       sync.RWMutex
+	reconcileInterval time.Duration
+	httpServer        *http.Server
 }
 
-type ddnsRoute struct {
-	namespace  string
-	name       string
-	zoneName   string
-	recordName string
-	recordType string
-	ttl        int
-	proxied    bool
-	lastIPs    []string
+type trackedRoute struct {
+	contentMode string // "gateway-address" or "ddns"
+	namespace   string
+	name        string
+	zoneName    string
+	recordName  string
+	recordType  string
+	ttl         int
+	proxied     bool
+	lastIPs     []string
+	// Gateway-specific fields (only used for gateway-address mode)
+	gatewayNamespace string
+	gatewayName      string
 }
 
 // NewController creates a new controller
 func NewController(cfg *config.Config, k8sClient *kubernetes.Client, cfClient *cloudflare.Client) *Controller {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Controller{
-		cfg:          cfg,
-		k8sClient:    k8sClient,
-		cfClient:     cfClient,
-		ddnsDetector: ddns.NewDetector(),
-		ctx:          ctx,
-		cancel:       cancel,
-		ddnsRoutes:   make(map[string]*ddnsRoute),
-		ddnsInterval: 5 * time.Minute, // Check every 5 minutes
+		cfg:               cfg,
+		k8sClient:         k8sClient,
+		cfClient:          cfClient,
+		ddnsDetector:      ddns.NewDetector(),
+		ctx:               ctx,
+		cancel:            cancel,
+		trackedRoutes:     make(map[string]*trackedRoute),
+		reconcileInterval: 5 * time.Minute, // Check every 5 minutes
 	}
 }
 
@@ -67,8 +72,8 @@ func (c *Controller) Run() error {
 		return fmt.Errorf("error starting healthcheck server: %w", err)
 	}
 
-	// Start DDNS background job
-	go c.runDDNSJob()
+	// Start reconciliation background job
+	go c.runReconciliationJob()
 
 	// Watch for HTTPRoute changes
 	return c.watchHTTPRoutes()
