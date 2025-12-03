@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"github.com/chia-network/go-modules/pkg/slogs"
 	"os"
 	"os/signal"
 	"syscall"
@@ -13,23 +13,25 @@ import (
 )
 
 func main() {
+	slogs.Init("info")
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Error loading configuration: %v", err)
+		slogs.Logr.Fatal("loading config", "error", err)
 	}
 
 	// Create Kubernetes client
 	k8sClient, err := kubernetes.NewClient(cfg.KubeconfigPath)
 	if err != nil {
-		log.Fatalf("Error creating Kubernetes client: %v", err)
+		slogs.Logr.Fatal("creating Kubernetes client", "error", err)
 	}
-	log.Println("Successfully connected to Kubernetes cluster")
+	slogs.Logr.Info("Successfully connected to Kubernetes cluster")
 
 	// Create Cloudflare client
 	cfClient, err := cloudflare.NewClient(cfg.CloudflareAPIToken)
 	if err != nil {
-		log.Fatalf("Error creating Cloudflare client: %v", err)
+		slogs.Logr.Fatal("creating Cloudflare client", "error", err)
 	}
 
 	// Create controller
@@ -41,12 +43,12 @@ func main() {
 
 	go func() {
 		<-sigChan
-		log.Println("Shutting down...")
+		slogs.Logr.Info("Received shutdown signal, shutting down...")
 		ctrl.Stop()
 	}()
 
 	// Run controller
 	if err := ctrl.Run(); err != nil {
-		log.Fatalf("Error running controller: %v", err)
+		slogs.Logr.Fatal("running controller", "error", err)
 	}
 }
