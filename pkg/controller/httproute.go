@@ -2,6 +2,8 @@ package controller
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/chia-network/go-modules/pkg/slogs"
 	"github.com/starttoaster/routeflare/pkg/cloudflare"
 	"github.com/starttoaster/routeflare/pkg/gateway"
@@ -9,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
-	"time"
 )
 
 // watchHTTPRoutes watches for HTTPRoute changes
@@ -71,7 +72,7 @@ func (c *Controller) watchHTTPRoutesEventLoop(watcher watch.Interface) (bool, er
 }
 
 // processHTTPRoute processes a single HTTPRoute
-func (c *Controller) processHTTPRoute(route *unstructured.Unstructured, isDDNSUpdate bool) {
+func (c *Controller) processHTTPRoute(route *unstructured.Unstructured, isReconciliationUpdate bool) {
 	name, namespace, annotations, err := kubernetes.ExtractHTTPRouteMetadata(route)
 	if err != nil {
 		slogs.Logr.Error("extracting metadata from HTTPRoute", "error", err)
@@ -135,16 +136,16 @@ func (c *Controller) processHTTPRoute(route *unstructured.Unstructured, isDDNSUp
 	// Process based on content mode
 	switch contentMode {
 	case "gateway-address":
-		c.processGatewayAddressMode(route, zoneName, recordName, recordType, ttl, proxied)
+		c.processGatewayAddressMode(route, namespace, name, zoneName, recordName, recordType, ttl, proxied, isReconciliationUpdate)
 	case "ddns":
-		c.processDDNSMode(route, namespace, name, zoneName, recordName, recordType, ttl, proxied, isDDNSUpdate)
+		c.processDDNSMode(route, namespace, name, zoneName, recordName, recordType, ttl, proxied, isReconciliationUpdate)
 	default:
 		slogs.Logr.Warn("Unknown content-mode for HTTPRoute", "route", fmt.Sprintf("%s/%s", namespace, name))
 	}
 }
 
 // processGatewayAddressMode processes HTTPRoute with gateway-address content mode
-func (c *Controller) processGatewayAddressMode(route *unstructured.Unstructured, zoneName, recordName, recordType string, ttl int, proxied bool) {
+func (c *Controller) processGatewayAddressMode(route *unstructured.Unstructured, namespace, name, zoneName, recordName, recordType string, ttl int, proxied bool, isReconciliationUpdate bool) {
 	// Get parent Gateway references
 	parents, found, err := unstructured.NestedSlice(route.Object, "spec", "parentRefs")
 	if !found || err != nil || len(parents) == 0 {
@@ -190,6 +191,10 @@ func (c *Controller) processGatewayAddressMode(route *unstructured.Unstructured,
 		return
 	}
 
+	// For reconciliation, we always update to fix any drift (e.g., manual DNS changes in Cloudflare)
+	// even if Gateway IPs haven't changed. This ensures DNS records always match Gateway addresses.
+	routeKey := fmt.Sprintf("%s/%s", namespace, name)
+
 	// Get zone ID
 	zoneID, err := c.cfClient.GetZoneIDByName(zoneName)
 	if err != nil {
@@ -197,16 +202,33 @@ func (c *Controller) processGatewayAddressMode(route *unstructured.Unstructured,
 		return
 	}
 
-	// Create/update DNS records
+	// Create/update DNS records (always update to ensure reconciliation fixes drift)
 	err = c.createOrUpdateRecords(recordType, zoneID, ips, recordName, ttl, proxied)
 	if err != nil {
 		slogs.Logr.Error("creating or updating records", "error", err)
 		return
 	}
+
+	// Store route info for periodic reconciliation
+	c.routesMutex.Lock()
+	c.trackedRoutes[routeKey] = &trackedRoute{
+		contentMode:      "gateway-address",
+		namespace:        namespace,
+		name:             name,
+		zoneName:         zoneName,
+		recordName:       recordName,
+		recordType:       recordType,
+		ttl:              ttl,
+		proxied:          proxied,
+		lastIPs:          ips,
+		gatewayNamespace: gatewayNamespace,
+		gatewayName:      gatewayName,
+	}
+	c.routesMutex.Unlock()
 }
 
 // processDDNSMode processes HTTPRoute with ddns content mode
-func (c *Controller) processDDNSMode(route *unstructured.Unstructured, namespace, name, zoneName, recordName, recordType string, ttl int, proxied bool, isDDNSUpdate bool) {
+func (c *Controller) processDDNSMode(route *unstructured.Unstructured, namespace, name, zoneName, recordName, recordType string, ttl int, proxied bool, isReconciliationUpdate bool) {
 	// Get current public IPs
 	ips, err := c.ddnsDetector.GetPublicIPsByType(c.ctx, recordType)
 	if err != nil {
@@ -216,14 +238,14 @@ func (c *Controller) processDDNSMode(route *unstructured.Unstructured, namespace
 		return
 	}
 
-	// Check if IPs have changed (only for updates, not initial processing)
+	// Check if IPs have changed (only for reconciliation updates, not initial processing)
 	routeKey := fmt.Sprintf("%s/%s", namespace, name)
-	if isDDNSUpdate {
-		c.ddnsMutex.RLock()
-		ddnsRoute, exists := c.ddnsRoutes[routeKey]
-		c.ddnsMutex.RUnlock()
+	if isReconciliationUpdate {
+		c.routesMutex.RLock()
+		trackedRoute, exists := c.trackedRoutes[routeKey]
+		c.routesMutex.RUnlock()
 
-		if exists && ipsEqual(ddnsRoute.lastIPs, ips) {
+		if exists && ipsEqual(trackedRoute.lastIPs, ips) {
 			return // IPs haven't changed, skip update
 		}
 	}
@@ -241,19 +263,20 @@ func (c *Controller) processDDNSMode(route *unstructured.Unstructured, namespace
 		slogs.Logr.Error("creating or updating records", "error", err)
 	}
 
-	// Store DDNS route info
-	c.ddnsMutex.Lock()
-	c.ddnsRoutes[routeKey] = &ddnsRoute{
-		namespace:  namespace,
-		name:       name,
-		zoneName:   zoneName,
-		recordName: recordName,
-		recordType: recordType,
-		ttl:        ttl,
-		proxied:    proxied,
-		lastIPs:    ips,
+	// Store route info for periodic reconciliation
+	c.routesMutex.Lock()
+	c.trackedRoutes[routeKey] = &trackedRoute{
+		contentMode: "ddns",
+		namespace:   namespace,
+		name:        name,
+		zoneName:    zoneName,
+		recordName:  recordName,
+		recordType:  recordType,
+		ttl:         ttl,
+		proxied:     proxied,
+		lastIPs:     ips,
 	}
-	c.ddnsMutex.Unlock()
+	c.routesMutex.Unlock()
 }
 
 func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips []string, recordName string, ttl int, proxied bool) error {
@@ -406,9 +429,9 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 			if record != nil {
 				if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record.ID); err != nil {
 					slogs.Logr.Error("deleting record", "type", rt, "name", recordName, "error", err)
-				} else {
-					slogs.Logr.Info("deleted record successfully", "type", rt, "name", recordName)
+					continue
 				}
+				slogs.Logr.Info("deleted record successfully", "type", rt, "name", recordName)
 			}
 		}
 	} else {
@@ -426,16 +449,17 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 		}
 	}
 
-	// Remove from DDNS routes if present
+	// Remove from tracked routes if present
 	routeKey := fmt.Sprintf("%s/%s", namespace, name)
-	c.ddnsMutex.Lock()
-	delete(c.ddnsRoutes, routeKey)
-	c.ddnsMutex.Unlock()
+	c.routesMutex.Lock()
+	delete(c.trackedRoutes, routeKey)
+	c.routesMutex.Unlock()
 }
 
-// runDDNSJob runs a background job to check for IP changes in DDNS routes
-func (c *Controller) runDDNSJob() {
-	ticker := time.NewTicker(c.ddnsInterval)
+// runReconciliationJob runs a background job to reconcile all tracked routes
+// This ensures DNS records stay in sync even if manually changed in Cloudflare
+func (c *Controller) runReconciliationJob() {
+	ticker := time.NewTicker(c.reconcileInterval)
 	defer ticker.Stop()
 
 	for {
@@ -443,29 +467,40 @@ func (c *Controller) runDDNSJob() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			c.ddnsMutex.RLock()
-			routes := make([]*ddnsRoute, 0, len(c.ddnsRoutes))
-			for _, route := range c.ddnsRoutes {
+			c.routesMutex.RLock()
+			routes := make([]*trackedRoute, 0, len(c.trackedRoutes))
+			for _, route := range c.trackedRoutes {
 				routes = append(routes, route)
 			}
-			c.ddnsMutex.RUnlock()
+			c.routesMutex.RUnlock()
 
-			for _, ddnsRoute := range routes {
+			for _, trackedRoute := range routes {
 				// Get the specific HTTPRoute
-				route, err := c.k8sClient.GetHTTPRoute(c.ctx, ddnsRoute.namespace, ddnsRoute.name)
+				route, err := c.k8sClient.GetHTTPRoute(c.ctx, trackedRoute.namespace, trackedRoute.name)
 				if err != nil {
 					// Route might have been deleted, remove from tracking
-					slogs.Logr.Error("getting HTTPRoute for DDNS update (may have been deleted)",
-						"route", fmt.Sprintf("%s/%s", ddnsRoute.namespace, ddnsRoute.name),
+					slogs.Logr.Error("getting HTTPRoute for reconciliation (may have been deleted)",
+						"route", fmt.Sprintf("%s/%s", trackedRoute.namespace, trackedRoute.name),
 						"error", err)
-					c.ddnsMutex.Lock()
-					routeKey := fmt.Sprintf("%s/%s", ddnsRoute.namespace, ddnsRoute.name)
-					delete(c.ddnsRoutes, routeKey)
-					c.ddnsMutex.Unlock()
+					c.routesMutex.Lock()
+					routeKey := fmt.Sprintf("%s/%s", trackedRoute.namespace, trackedRoute.name)
+					delete(c.trackedRoutes, routeKey)
+					c.routesMutex.Unlock()
 					continue
 				}
 
-				c.processHTTPRoute(route, true) // true = isDDNSUpdate
+				switch trackedRoute.contentMode {
+				case "ddns":
+					// For DDNS, check if public IPs have changed
+					c.processHTTPRoute(route, true)
+				case "gateway-address":
+					// For gateway-address, reconcile out state drift
+					c.processHTTPRoute(route, true)
+				default:
+					slogs.Logr.Warn("Unknown content mode during reconciliation",
+						"route", fmt.Sprintf("%s/%s", trackedRoute.namespace, trackedRoute.name),
+						"contentMode", trackedRoute.contentMode)
+				}
 			}
 		}
 	}
