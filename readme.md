@@ -36,7 +36,6 @@ The `routeflare/content-mode` annotation on HTTPRoutes supports the following va
 
 - `ddns` will detect the current IP address your cluster egresses to the world from and use that in the content for your record(s). Will attempt to automatically detect your current IPv4 address if `routeflare/type` is set to `A`, IPv6 if set to `AAAA`, or both if set to `A/AAAA`. A background job will run to detect if your address has changed and reconcile that with your `ddns` HTTPRoutes.
 
-
 ### Example
 
 ```yaml
@@ -75,6 +74,6 @@ spec:
 
 This tool is early on in development. Do not use this for production web services, this is intended for a homelab. 
 
-One identified limitation of Routeflare is if you perform the following steps in order: If you start Routeflare in your cluster, create an HTTPRoute with relevant annotations for this tool so that it creates a DNS record, stop Routeflare, delete the HTTPRoute, and finally start Routeflare back up again, then Routeflare will lose track of that DNS record and leave the record dangling in Cloudflare. This is because Routeflare is entirely stateless, and doesn't track ownership of records using any mechanism in Cloudflare. The problem of ownership state could be handled a few different ways: External-DNS uses TXT records to close this limitation, though ownership metadata could also just be stored alongside the record in its comment section, or just in a local sqlite database. The best solution is being brainstormed.
+One identified limitation of Routeflare is if you perform the following steps in order: Start Routeflare in your cluster, create an HTTPRoute with relevant annotations so that it creates a DNS record, stop Routeflare, delete the HTTPRoute, and finally start Routeflare back up again, then Routeflare will lose track of that DNS record and leave the record dangling in Cloudflare. This is because Routeflare doesn't know which zones it manages records in at startup. In a future release, there may be an optional configuration that declares which zone IDs to check at start for records owned by this Routeflare instance that no longer exist as HTTPRoutes in the cluster. For now, it assumes that you only delete HTTPRoutes while it is running. The trade off of this, is that in Routeflare's current state, it does not require knowing your zone IDs in advance, as long as the Cloudflare API token has permission to edit records in the zones associated with your HTTPRoutes. This makes Routeflare incredibly simple to configure and run.
 
 If you find another limitation of Routeflare, please open up an Issue!

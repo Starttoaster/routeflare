@@ -21,6 +21,7 @@ type Config struct {
 	CloudflareAPIToken string
 	Strategy           Strategy
 	KubeconfigPath     string
+	RecordOwnerID      string
 }
 
 // Load loads configuration from environment variables
@@ -46,6 +47,12 @@ func Load() (*Config, error) {
 
 	// KUBECONFIG is optional
 	cfg.KubeconfigPath = os.Getenv("KUBECONFIG")
+
+	// RECORD_OWNER_ID is optional, defaults to "routeflare"
+	cfg.RecordOwnerID = os.Getenv("RECORD_OWNER_ID")
+	if cfg.RecordOwnerID == "" {
+		cfg.RecordOwnerID = "routeflare"
+	}
 
 	return cfg, nil
 }

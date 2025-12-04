@@ -3,9 +3,10 @@ package cloudflare
 import (
 	"context"
 	"fmt"
-	"github.com/chia-network/go-modules/pkg/slogs"
 	"strconv"
+	"strings"
 
+	"github.com/chia-network/go-modules/pkg/slogs"
 	"github.com/cloudflare/cloudflare-go"
 )
 
@@ -44,6 +45,10 @@ type DNSRecord struct {
 	Content string
 	TTL     int // 1 = auto, or seconds
 	Proxied bool
+	comment string // Processed internally by package
+
+	// Fields that go in the record's comments as metadata:
+	OwnerID string // Owner/comment field for tracking record ownership
 }
 
 // GetZoneIDByName finds a zone ID by its name
@@ -78,16 +83,20 @@ func (c *Client) FindRecord(ctx context.Context, zoneID, recordName string, reco
 		Content: record.Content,
 		TTL:     record.TTL,
 		Proxied: record.Proxied != nil && *record.Proxied,
+		comment: record.Comment,
+		OwnerID: extractOwnerFromComment(record.Comment),
 	}, nil
 }
 
-// CreateRecord creates a new DNS record
-func (c *Client) CreateRecord(ctx context.Context, zoneID string, record DNSRecord) (*DNSRecord, error) {
+// createRecord creates a new DNS record
+// If this is made to be a public function in the future, it should check for ownership in the same way that UpsertRecord does
+func (c *Client) createRecord(ctx context.Context, zoneID string, record DNSRecord) (*DNSRecord, error) {
 	cfRecord := cloudflare.CreateDNSRecordParams{
 		Type:    string(record.Type),
 		Name:    record.Name,
 		Content: record.Content,
 		TTL:     record.TTL,
+		Comment: formatCommentMetadata(record.OwnerID),
 	}
 
 	proxied := record.Proxied
@@ -103,7 +112,8 @@ func (c *Client) CreateRecord(ctx context.Context, zoneID string, record DNSReco
 		"name", cfRecord.Name,
 		"ip", cfRecord.Content,
 		"ttl", cfRecord.TTL,
-		"proxied", record.Proxied)
+		"proxied", record.Proxied,
+		"owner", record.OwnerID)
 
 	return &DNSRecord{
 		ID:      created.ID,
@@ -112,11 +122,13 @@ func (c *Client) CreateRecord(ctx context.Context, zoneID string, record DNSReco
 		Content: created.Content,
 		TTL:     created.TTL,
 		Proxied: created.Proxied != nil && *created.Proxied,
+		OwnerID: extractOwnerFromComment(created.Comment),
 	}, nil
 }
 
-// UpdateRecord updates an existing DNS record
-func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord DNSRecord, record DNSRecord) (*DNSRecord, error) {
+// updateRecord updates an existing DNS record
+// If this is made to be a public function in the future, it should check for ownership in the same way that UpsertRecord does
+func (c *Client) updateRecord(ctx context.Context, zoneID string, currentRecord DNSRecord, record DNSRecord) (*DNSRecord, error) {
 	// Check if all record fields are already up to date before updating
 	record.ID = currentRecord.ID
 	if currentRecord == record {
@@ -133,6 +145,8 @@ func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord 
 		TTL:     record.TTL,
 		Proxied: &proxied,
 	}
+	comment := formatCommentMetadata(record.OwnerID)
+	cfRecord.Comment = &comment
 
 	updated, err := c.api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneID), cfRecord)
 	if err != nil {
@@ -144,7 +158,8 @@ func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord 
 		"name", cfRecord.Name,
 		"ip", cfRecord.Content,
 		"ttl", cfRecord.TTL,
-		"proxied", record.Proxied)
+		"proxied", record.Proxied,
+		"owner", record.OwnerID)
 
 	return &DNSRecord{
 		ID:      updated.ID,
@@ -153,19 +168,34 @@ func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord 
 		Content: updated.Content,
 		TTL:     updated.TTL,
 		Proxied: updated.Proxied != nil && *updated.Proxied,
+		OwnerID: extractOwnerFromComment(updated.Comment),
 	}, nil
 }
 
 // DeleteRecord deletes a DNS record
-func (c *Client) DeleteRecord(ctx context.Context, zoneID, recordID string) error {
-	err := c.api.DeleteDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneID), recordID)
+func (c *Client) DeleteRecord(ctx context.Context, zoneID string, record DNSRecord) error {
+	existing, err := c.FindRecord(ctx, zoneID, record.Name, record.Type)
 	if err != nil {
-		return fmt.Errorf("error deleting DNS record: %w", err)
+		return fmt.Errorf("error finding record: %w", err)
 	}
+
+	if existing != nil {
+		if hasOwnerConflict(*existing, record) {
+			return fmt.Errorf("record ownership conflict: existing owner '%s' does not match expected owner '%s'", existing.OwnerID, record.OwnerID)
+		}
+
+		err = c.api.DeleteDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneID), existing.ID)
+		if err != nil {
+			return fmt.Errorf("error deleting DNS record: %w", err)
+		}
+	}
+
 	return nil
 }
 
-// UpsertRecord creates or updates a DNS record
+// UpsertRecord creates or updates a DNS record with ownership checking
+// If the record exists and has a different owner, it returns an error
+// If the record exists with no owner, it updates the record with the new owner
 func (c *Client) UpsertRecord(ctx context.Context, zoneID string, record DNSRecord) (*DNSRecord, error) {
 	existing, err := c.FindRecord(ctx, zoneID, record.Name, record.Type)
 	if err != nil {
@@ -173,12 +203,20 @@ func (c *Client) UpsertRecord(ctx context.Context, zoneID string, record DNSReco
 	}
 
 	if existing != nil {
+		if hasOwnerConflict(*existing, record) {
+			return nil, fmt.Errorf("record ownership conflict: existing owner '%s' does not match expected owner '%s'", existing.OwnerID, record.OwnerID)
+		}
+
+		// Format record comment metadata
+		record.comment = formatCommentMetadata(record.OwnerID)
+
 		// Update existing record
-		return c.UpdateRecord(ctx, zoneID, *existing, record)
+		return c.updateRecord(ctx, zoneID, *existing, record)
 	}
 
-	// Create new record
-	return c.CreateRecord(ctx, zoneID, record)
+	// Create new record with formatted comment metadata
+	record.comment = formatCommentMetadata(record.OwnerID)
+	return c.createRecord(ctx, zoneID, record)
 }
 
 // ParseTTL parses TTL string to int (1 for auto, or seconds)
@@ -211,4 +249,41 @@ func ParseProxied(proxiedStr string) (bool, error) {
 	}
 
 	return proxied, nil
+}
+
+// formatCommentMetadata formats record metadata into a comment string
+// Format: "record-owner-id=$ownerID"
+func formatCommentMetadata(ownerID string) string {
+	if ownerID == "" {
+		return ""
+	}
+	return fmt.Sprintf("record-owner-id=%s", ownerID)
+}
+
+// extractOwnerFromComment extracts the owner ID from a comment string
+func extractOwnerFromComment(comment string) string {
+	if comment == "" {
+		return ""
+	}
+
+	// Parse key-value pairs separated by spaces
+	// Format: "key=value key2=value2 key3=value3"
+	pairs := strings.Fields(comment)
+	for _, pair := range pairs {
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 && parts[0] == "record-owner-id" {
+			return parts[1]
+		}
+	}
+
+	// No record-owner-id found
+	return ""
+}
+
+// hasOwnerConflict returns true if there is an owner conflict
+func hasOwnerConflict(current DNSRecord, new DNSRecord) bool {
+	if current.OwnerID != "" && current.OwnerID != new.OwnerID {
+		return true
+	}
+	return false
 }
