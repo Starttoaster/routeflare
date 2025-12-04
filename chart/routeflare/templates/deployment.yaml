@@ -45,6 +45,10 @@ spec:
             - name: STRATEGY
               value: {{ .Values.cloudflare.strategy | quote }}
             {{- end }}
+            {{- if .Values.cloudflare.recordOwnerID }}
+            - name: RECORD_OWNER_ID
+              value: {{ .Values.cloudflare.recordOwnerID | quote }}
+            {{- end }}
             {{- if .Values.kubernetes.kubeconfig }}
             - name: KUBECONFIG
               value: {{ .Values.kubernetes.kubeconfig | quote }}

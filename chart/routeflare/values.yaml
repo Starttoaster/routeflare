@@ -63,6 +63,10 @@ cloudflare:
   # "full" - manages complete lifecycle (create, update, delete)
   # "upsert-only" - only creates/updates records, never deletes
   strategy: "full"
+  # Record owner ID for tracking DNS record ownership (optional, defaults to "routeflare")
+  # Records created/updated by routeflare will have this value stored in the comment field
+  # If a record already has a different owner, routeflare will skip managing it
+  recordOwnerID: ""
 
 # Kubernetes configuration
 kubernetes:

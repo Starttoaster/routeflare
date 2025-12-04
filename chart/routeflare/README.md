@@ -26,6 +26,9 @@ cloudflare:
   apiToken:
     createSecret: true
     value: "your-cloudflare-api-token"
+  # Optional: Custom record owner ID (defaults to "routeflare" if not set)
+  # Records created/updated by routeflare will have this value stored in the comment field
+  # recordOwnerID: "my-custom-owner"
 ```
 
 Then install with:
