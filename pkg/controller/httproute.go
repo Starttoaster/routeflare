@@ -326,7 +326,7 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 				Content: ip,
 				TTL:     ttl,
 				Proxied: proxied,
-				Comment: c.cfg.RecordOwnerID,
+				OwnerID: c.cfg.RecordOwnerID,
 			}
 
 			_, err := c.cfClient.UpsertRecord(c.ctx, zoneID, record)
@@ -363,7 +363,7 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 					Content: ip,
 					TTL:     ttl,
 					Proxied: proxied,
-					Comment: c.cfg.RecordOwnerID,
+					OwnerID: c.cfg.RecordOwnerID,
 				}
 
 				_, err := c.cfClient.UpsertRecord(c.ctx, zoneID, record)
@@ -390,7 +390,7 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 					Content: ip,
 					TTL:     ttl,
 					Proxied: proxied,
-					Comment: c.cfg.RecordOwnerID,
+					OwnerID: c.cfg.RecordOwnerID,
 				}
 
 				_, err := c.cfClient.UpsertRecord(c.ctx, zoneID, record)
@@ -478,7 +478,7 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 			record := cloudflare.DNSRecord{
 				Type:    cloudflare.RecordType(rt),
 				Name:    recordName,
-				Comment: c.cfg.RecordOwnerID,
+				OwnerID: c.cfg.RecordOwnerID,
 			}
 			if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record); err != nil {
 				slogs.Logr.Error("deleting record", "type", rt, "name", recordName, "error", err)
@@ -490,7 +490,7 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 		record := cloudflare.DNSRecord{
 			Type:    cloudflare.RecordType(recordType),
 			Name:    recordName,
-			Comment: c.cfg.RecordOwnerID,
+			OwnerID: c.cfg.RecordOwnerID,
 		}
 		if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record); err != nil {
 			slogs.Logr.Error("deleting record", "type", recordType, "name", recordName, "error", err)
