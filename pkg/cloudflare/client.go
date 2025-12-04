@@ -167,11 +167,25 @@ func (c *Client) updateRecord(ctx context.Context, zoneID string, currentRecord 
 }
 
 // DeleteRecord deletes a DNS record
-func (c *Client) DeleteRecord(ctx context.Context, zoneID, recordID string) error {
-	err := c.api.DeleteDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneID), recordID)
+func (c *Client) DeleteRecord(ctx context.Context, zoneID string, record DNSRecord) error {
+	existing, err := c.FindRecord(ctx, zoneID, record.Name, record.Type)
 	if err != nil {
-		return fmt.Errorf("error deleting DNS record: %w", err)
+		return fmt.Errorf("error finding record: %w", err)
 	}
+
+	if existing != nil {
+		// Check ownership
+		if existing.Comment != "" && existing.Comment != record.Comment {
+			return fmt.Errorf("record ownership conflict: existing owner '%s' does not match expected owner '%s'", existing.Comment, record.Comment)
+		}
+
+		// Delete existing record
+		err = c.api.DeleteDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneID), existing.ID)
+		if err != nil {
+			return fmt.Errorf("error deleting DNS record: %w", err)
+		}
+	}
+
 	return nil
 }
 

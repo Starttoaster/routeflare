@@ -475,31 +475,27 @@ func (c *Controller) processHTTPRouteDeletion(obj runtime.Object) {
 	if recordType == "A/AAAA" {
 		// Delete both A and AAAA records
 		for _, rt := range []string{"A", "AAAA"} {
-			record, err := c.cfClient.FindRecord(c.ctx, zoneID, recordName, cloudflare.RecordType(rt))
-			if err != nil {
-				slogs.Logr.Error("finding record to delete", "type", rt, "name", recordName, "error", err)
+			record := cloudflare.DNSRecord{
+				Type:    cloudflare.RecordType(rt),
+				Name:    recordName,
+				Comment: c.cfg.RecordOwnerID,
+			}
+			if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record); err != nil {
+				slogs.Logr.Error("deleting record", "type", rt, "name", recordName, "error", err)
 				continue
 			}
-			if record != nil {
-				if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record.ID); err != nil {
-					slogs.Logr.Error("deleting record", "type", rt, "name", recordName, "error", err)
-					continue
-				}
-				slogs.Logr.Info("deleted record successfully", "type", rt, "name", recordName)
-			}
+			slogs.Logr.Info("deleted record successfully", "type", rt, "name", recordName)
 		}
 	} else {
-		record, err := c.cfClient.FindRecord(c.ctx, zoneID, recordName, cloudflare.RecordType(recordType))
-		if err != nil {
-			slogs.Logr.Error("finding record to delete", "type", recordType, "name", recordName, "error", err)
-			return
+		record := cloudflare.DNSRecord{
+			Type:    cloudflare.RecordType(recordType),
+			Name:    recordName,
+			Comment: c.cfg.RecordOwnerID,
 		}
-		if record != nil {
-			if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record.ID); err != nil {
-				slogs.Logr.Error("deleting record", "type", recordType, "name", recordName, "error", err)
-			} else {
-				slogs.Logr.Info("deleted record successfully", "type", recordType, "name", recordName)
-			}
+		if err := c.cfClient.DeleteRecord(c.ctx, zoneID, record); err != nil {
+			slogs.Logr.Error("deleting record", "type", recordType, "name", recordName, "error", err)
+		} else {
+			slogs.Logr.Info("deleted record successfully", "type", recordType, "name", recordName)
 		}
 	}
 
