@@ -36,7 +36,6 @@ The `routeflare/content-mode` annotation on HTTPRoutes supports the following va
 
 - `ddns` will detect the current IP address your cluster egresses to the world from and use that in the content for your record(s). Will attempt to automatically detect your current IPv4 address if `routeflare/type` is set to `A`, IPv6 if set to `AAAA`, or both if set to `A/AAAA`. A background job will run to detect if your address has changed and reconcile that with your `ddns` HTTPRoutes.
 
-
 ### Example
 
 ```yaml

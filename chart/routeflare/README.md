@@ -27,7 +27,7 @@ cloudflare:
     createSecret: true
     value: "your-cloudflare-api-token"
   # Optional: Custom record owner ID (defaults to "routeflare" if not set)
-  # Records created/updated by routeflare will have this value stored in the comment field
+  # See the Record Owner IDs section below
   # recordOwnerID: "my-custom-owner"
 ```
 
@@ -65,3 +65,9 @@ helm upgrade --install --create-namespace \
   routeflare \
   routeflare
 ```
+
+## Record Owner IDs
+
+This tool uses the values configuration at `cloudflare.recordOwnerID` to set the record owner name. This should be set to something for unique for each cluster you run Routeflare in. If you're familiar with External-DNS, it is similar to the txt-owner-id configuration there.
+
+The record owner ID is placed in a record's comments field.
