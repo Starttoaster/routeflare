@@ -36,6 +36,41 @@ The `routeflare/content-mode` annotation on HTTPRoutes supports the following va
 
 - `ddns` will detect the current IP address your cluster egresses to the world from and use that in the content for your record(s). Will attempt to automatically detect your current IPv4 address if `routeflare/type` is set to `A`, IPv6 if set to `AAAA`, or both if set to `A/AAAA`. A background job will run to detect if your address has changed and reconcile that with your `ddns` HTTPRoutes.
 
+
+### Example
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  annotations:
+    routeflare/content-mode: gateway-address
+    # routeflare/type: A
+    # routeflare/ttl: 360
+    # routeflare/proxied: "true"
+  name: prometheus
+  namespace: monitoring
+spec:
+  hostnames:
+    - prometheus.example.com
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: default-internal
+      namespace: gateway-system
+  rules:
+    - backendRefs:
+        - group: ''
+          kind: Service
+          name: prometheus
+          port: 9090
+          weight: 1
+      matches:
+        - path:
+            type: PathPrefix
+            value: /
+```
+
 ## Limitations
 
 This tool is early on in development. Do not use this for production web services, this is intended for a homelab. 
