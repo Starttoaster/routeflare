@@ -9,6 +9,10 @@ A Helm chart for deploying Routeflare, a Kubernetes controller that watches HTTP
 - Gateway API CRDs installed
 - Cloudflare API token with DNS write permissions
 
+### Cloudflare API Token
+
+You will need to go into your Cloudflare account or profile settings and create a new API token for Routeflare. It needs `dns:Edit` permissions in each zone that you want Routeflare to manage records in. See this [screenshot](../../content/routeflare-token.png) for an example.
+
 ## Installation
 
 ### Basic Installation
