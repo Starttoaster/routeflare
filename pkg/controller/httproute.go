@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/chia-network/go-modules/pkg/slogs"
@@ -325,10 +326,19 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 				Content: ip,
 				TTL:     ttl,
 				Proxied: proxied,
+				Comment: c.cfg.RecordOwnerID,
 			}
 
 			_, err := c.cfClient.UpsertRecord(c.ctx, zoneID, record)
 			if err != nil {
+				// Check if it's an ownership conflict
+				if isOwnershipConflict(err) {
+					slogs.Logr.Warn("Skipping record due to ownership conflict",
+						"type", recordTypeForIP,
+						"name", recordName,
+						"error", err)
+					continue
+				}
 				slogs.Logr.Error("upserting record", "type", recordTypeForIP, "name", recordName, "error", err)
 				continue
 			}
@@ -353,10 +363,19 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 					Content: ip,
 					TTL:     ttl,
 					Proxied: proxied,
+					Comment: c.cfg.RecordOwnerID,
 				}
 
 				_, err := c.cfClient.UpsertRecord(c.ctx, zoneID, record)
 				if err != nil {
+					// Check if it's an ownership conflict
+					if isOwnershipConflict(err) {
+						slogs.Logr.Warn("Skipping record due to ownership conflict",
+							"type", recordType,
+							"name", recordName,
+							"error", err)
+						return nil
+					}
 					slogs.Logr.Error("upserting record", "type", recordType, "name", recordName, "error", err)
 				}
 				return nil
@@ -371,10 +390,19 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 					Content: ip,
 					TTL:     ttl,
 					Proxied: proxied,
+					Comment: c.cfg.RecordOwnerID,
 				}
 
 				_, err := c.cfClient.UpsertRecord(c.ctx, zoneID, record)
 				if err != nil {
+					// Check if it's an ownership conflict
+					if isOwnershipConflict(err) {
+						slogs.Logr.Warn("Skipping record due to ownership conflict",
+							"type", recordType,
+							"name", recordName,
+							"error", err)
+						return nil
+					}
 					slogs.Logr.Error("upserting record", "type", recordType, "name", recordName, "error", err)
 				}
 				return nil
@@ -383,6 +411,14 @@ func (c *Controller) createOrUpdateRecords(recordType string, zoneID string, ips
 	}
 
 	return nil
+}
+
+// isOwnershipConflict checks if an error is an ownership conflict
+func isOwnershipConflict(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "ownership conflict")
 }
 
 // processHTTPRouteDeletion handles HTTPRoute deletion

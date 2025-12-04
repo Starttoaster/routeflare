@@ -44,6 +44,7 @@ type DNSRecord struct {
 	Content string
 	TTL     int // 1 = auto, or seconds
 	Proxied bool
+	Comment string // Owner/comment field for tracking record ownership
 }
 
 // GetZoneIDByName finds a zone ID by its name
@@ -78,16 +79,19 @@ func (c *Client) FindRecord(ctx context.Context, zoneID, recordName string, reco
 		Content: record.Content,
 		TTL:     record.TTL,
 		Proxied: record.Proxied != nil && *record.Proxied,
+		Comment: record.Comment,
 	}, nil
 }
 
-// CreateRecord creates a new DNS record
-func (c *Client) CreateRecord(ctx context.Context, zoneID string, record DNSRecord) (*DNSRecord, error) {
+// createRecord creates a new DNS record
+// If this is made to be a public function in the future, it should check for ownership in the same way that UpsertRecord does
+func (c *Client) createRecord(ctx context.Context, zoneID string, record DNSRecord) (*DNSRecord, error) {
 	cfRecord := cloudflare.CreateDNSRecordParams{
 		Type:    string(record.Type),
 		Name:    record.Name,
 		Content: record.Content,
 		TTL:     record.TTL,
+		Comment: record.Comment,
 	}
 
 	proxied := record.Proxied
@@ -103,7 +107,8 @@ func (c *Client) CreateRecord(ctx context.Context, zoneID string, record DNSReco
 		"name", cfRecord.Name,
 		"ip", cfRecord.Content,
 		"ttl", cfRecord.TTL,
-		"proxied", record.Proxied)
+		"proxied", record.Proxied,
+		"comment", created.Comment)
 
 	return &DNSRecord{
 		ID:      created.ID,
@@ -112,11 +117,13 @@ func (c *Client) CreateRecord(ctx context.Context, zoneID string, record DNSReco
 		Content: created.Content,
 		TTL:     created.TTL,
 		Proxied: created.Proxied != nil && *created.Proxied,
+		Comment: created.Comment,
 	}, nil
 }
 
-// UpdateRecord updates an existing DNS record
-func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord DNSRecord, record DNSRecord) (*DNSRecord, error) {
+// updateRecord updates an existing DNS record
+// If this is made to be a public function in the future, it should check for ownership in the same way that UpsertRecord does
+func (c *Client) updateRecord(ctx context.Context, zoneID string, currentRecord DNSRecord, record DNSRecord) (*DNSRecord, error) {
 	// Check if all record fields are already up to date before updating
 	record.ID = currentRecord.ID
 	if currentRecord == record {
@@ -132,6 +139,7 @@ func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord 
 		Content: record.Content,
 		TTL:     record.TTL,
 		Proxied: &proxied,
+		Comment: &record.Comment,
 	}
 
 	updated, err := c.api.UpdateDNSRecord(ctx, cloudflare.ZoneIdentifier(zoneID), cfRecord)
@@ -144,7 +152,8 @@ func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord 
 		"name", cfRecord.Name,
 		"ip", cfRecord.Content,
 		"ttl", cfRecord.TTL,
-		"proxied", record.Proxied)
+		"proxied", record.Proxied,
+		"comment", updated.Comment)
 
 	return &DNSRecord{
 		ID:      updated.ID,
@@ -153,6 +162,7 @@ func (c *Client) UpdateRecord(ctx context.Context, zoneID string, currentRecord 
 		Content: updated.Content,
 		TTL:     updated.TTL,
 		Proxied: updated.Proxied != nil && *updated.Proxied,
+		Comment: updated.Comment,
 	}, nil
 }
 
@@ -165,7 +175,9 @@ func (c *Client) DeleteRecord(ctx context.Context, zoneID, recordID string) erro
 	return nil
 }
 
-// UpsertRecord creates or updates a DNS record
+// UpsertRecord creates or updates a DNS record with ownership checking
+// If the record exists and has a different owner, it returns an error
+// If the record exists with no owner, it updates the record with the new owner
 func (c *Client) UpsertRecord(ctx context.Context, zoneID string, record DNSRecord) (*DNSRecord, error) {
 	existing, err := c.FindRecord(ctx, zoneID, record.Name, record.Type)
 	if err != nil {
@@ -173,12 +185,17 @@ func (c *Client) UpsertRecord(ctx context.Context, zoneID string, record DNSReco
 	}
 
 	if existing != nil {
+		// Check ownership
+		if existing.Comment != "" && existing.Comment != record.Comment {
+			return nil, fmt.Errorf("record ownership conflict: existing owner '%s' does not match expected owner '%s'", existing.Comment, record.Comment)
+		}
+
 		// Update existing record
-		return c.UpdateRecord(ctx, zoneID, *existing, record)
+		return c.updateRecord(ctx, zoneID, *existing, record)
 	}
 
-	// Create new record
-	return c.CreateRecord(ctx, zoneID, record)
+	// Create new record with owner
+	return c.createRecord(ctx, zoneID, record)
 }
 
 // ParseTTL parses TTL string to int (1 for auto, or seconds)
