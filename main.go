@@ -21,26 +21,23 @@ func main() {
 		slogs.Logr.Fatal("loading config", "error", err)
 	}
 
-	// Create Kubernetes client
+	// Init clients
 	k8sClient, err := kubernetes.NewClient(cfg.KubeconfigPath)
 	if err != nil {
 		slogs.Logr.Fatal("creating Kubernetes client", "error", err)
 	}
 	slogs.Logr.Info("Successfully connected to Kubernetes cluster")
 
-	// Create Cloudflare client
 	cfClient, err := cloudflare.NewClient(cfg.CloudflareAPIToken)
 	if err != nil {
 		slogs.Logr.Fatal("creating Cloudflare client", "error", err)
 	}
 
-	// Create controller
 	ctrl := controller.NewController(cfg, k8sClient, cfClient)
 
-	// Handle graceful shutdown
+	// Handler for graceful shutdowns
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-
 	go func() {
 		<-sigChan
 		slogs.Logr.Info("Received shutdown signal, shutting down...")
