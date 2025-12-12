@@ -92,8 +92,6 @@ env: []
   # - name: CUSTOM_VAR
   #   value: "value"
 
-# Liveness probe
-# Note: If health endpoints are not implemented, set to {} to disable or use exec probe
 livenessProbe:
   httpGet:
     path: /healthz
@@ -102,18 +100,7 @@ livenessProbe:
   periodSeconds: 10
   timeoutSeconds: 5
   failureThreshold: 3
-# Alternative exec probe if health endpoints are not available:
-# livenessProbe:
-#   exec:
-#     command:
-#       - /bin/sh
-#       - -c
-#       - "pgrep routeflare || exit 1"
-#   initialDelaySeconds: 30
-#   periodSeconds: 10
 
-# Readiness probe
-# Note: If health endpoints are not implemented, set to {} to disable or use exec probe
 readinessProbe:
   httpGet:
     path: /healthz
@@ -122,17 +109,7 @@ readinessProbe:
   periodSeconds: 5
   timeoutSeconds: 3
   failureThreshold: 3
-# Alternative exec probe if health endpoints are not available:
-# readinessProbe:
-#   exec:
-#     command:
-#       - /bin/sh
-#       - -c
-#       - "pgrep routeflare || exit 1"
-#   initialDelaySeconds: 10
-#   periodSeconds: 5
 
-# Pod disruption budget
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
