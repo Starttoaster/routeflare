@@ -71,3 +71,14 @@ helm upgrade --install --create-namespace \
 This tool uses the values configuration at `cloudflare.recordOwnerID` to set the record owner name. This should be set to something for unique for each cluster you run Routeflare in. If you're familiar with External-DNS, it is similar to the txt-owner-id configuration there.
 
 The record owner ID is placed in a record's comments field.
+
+## DNS Record Strategy
+
+Routeflare supports two record management strategies. You can control this by setting the following in the helm chart's values:
+
+```yaml
+cloudflare:
+  strategy: "full"
+```
+
+This strategy value can either be `full` or `upsert-only`. Use `full` if you would like Routeflare to manage the full lifecycle of a record (create, update, and delete.) Use `upsert-only` if you would like Routeflare to only create and update records (never delete.) The default strategy is `full`.e
